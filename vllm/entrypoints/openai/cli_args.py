@@ -304,9 +304,9 @@ def validate_parsed_serve_args(args: argparse.Namespace):
     # Validate proxy mode configuration
     if args.responses_proxy_mode:
         if not args.responses_proxy_base_url:
-            raise TypeError("Error: --responses-proxy-mode requires --responses-proxy-base-url")
+            raise ValueError("Error: --responses-proxy-mode requires --responses-proxy-base-url")
         if not args.responses_proxy_api_key:
-            raise TypeError("Error: --responses-proxy-mode requires --responses-proxy-api-key")
+            raise ValueError("Error: --responses-proxy-mode requires --responses-proxy-api-key")
         # In proxy mode, we don't need a local model
         logger.info("Running in Responses API proxy mode, local model not required")
         return
@@ -316,9 +316,9 @@ def validate_parsed_serve_args(args: argparse.Namespace):
 
     # Enable auto tool needs a tool call parser to be valid
     if args.enable_auto_tool_choice and not args.tool_call_parser:
-        raise TypeError("Error: --enable-auto-tool-choice requires --tool-call-parser")
+        raise ValueError("Error: --enable-auto-tool-choice requires --tool-call-parser")
     if args.enable_log_outputs and not args.enable_log_requests:
-        raise TypeError("Error: --enable-log-outputs requires --enable-log-requests")
+        raise ValueError("Error: --enable-log-outputs requires --enable-log-requests")
 
 
 def create_parser_for_docs() -> FlexibleArgumentParser:

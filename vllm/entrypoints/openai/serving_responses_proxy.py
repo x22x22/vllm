@@ -15,6 +15,7 @@ from http import HTTPStatus
 
 from fastapi import Request
 from openai import AsyncOpenAI
+from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from vllm.entrypoints.logger import RequestLogger
 from vllm.entrypoints.openai.protocol import (
@@ -22,7 +23,6 @@ from vllm.entrypoints.openai.protocol import (
     ResponseCompletedEvent,
     ResponseCreatedEvent,
     ResponseInProgressEvent,
-    ResponseInputOutputMessage,
     ResponsesRequest,
     ResponsesResponse,
     ResponseUsage,
@@ -79,9 +79,12 @@ class OpenAIServingResponsesProxy:
         # Convert input messages to chat format
         messages = []
         
-        # Handle input field which can be a list of messages or a single message
+        # Handle input field which can be a string or list of messages
         input_data = request.input
-        if isinstance(input_data, list):
+        if isinstance(input_data, str):
+            # String input - convert to user message
+            messages.append({"role": "user", "content": input_data})
+        elif isinstance(input_data, list):
             for msg in input_data:
                 if isinstance(msg, dict):
                     # Standard message format
@@ -140,10 +143,10 @@ class OpenAIServingResponsesProxy:
         message = choice.get("message", {})
         content = message.get("content", "")
 
-        # Build output message
-        output_message = ResponseInputOutputMessage(
+        # Build output message using ResponseOutputMessage
+        output_message = ResponseOutputMessage(
             role="assistant",
-            content=content,
+            content=[content] if content else [],
         )
 
         # Build usage information
@@ -231,9 +234,9 @@ class OpenAIServingResponsesProxy:
                 completion_tokens = usage.get("completion_tokens", 0)
 
         # Send completed event with final response
-        output_message = ResponseInputOutputMessage(
+        output_message = ResponseOutputMessage(
             role="assistant",
-            content=accumulated_content,
+            content=[accumulated_content] if accumulated_content else [],
         )
 
         usage_obj = ResponseUsage(
