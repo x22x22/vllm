@@ -67,7 +67,16 @@ async def serve_http(
 
     loop = asyncio.get_running_loop()
 
-    watchdog_task = loop.create_task(watchdog_loop(server, app.state.engine_client))
+    # Only start watchdog if engine_client exists (not in proxy mode)
+    if app.state.engine_client is not None:
+        watchdog_task = loop.create_task(watchdog_loop(server, app.state.engine_client))
+    else:
+        # Create a dummy task for proxy mode
+        async def dummy_watchdog():
+            while True:
+                await asyncio.sleep(60)
+        watchdog_task = loop.create_task(dummy_watchdog())
+        
     server_task = loop.create_task(server.serve(sockets=[sock] if sock else None))
 
     ssl_cert_refresher = (
@@ -167,9 +176,11 @@ def _add_shutdown_handlers(app: FastAPI, server: uvicorn.Server) -> None:
     @app.exception_handler(EngineDeadError)
     @app.exception_handler(EngineGenerateError)
     async def runtime_exception_handler(request: Request, __):
-        terminate_if_errored(
-            server=server,
-            engine=request.app.state.engine_client,
-        )
+        # Only terminate if we have an engine_client
+        if request.app.state.engine_client is not None:
+            terminate_if_errored(
+                server=server,
+                engine=request.app.state.engine_client,
+            )
 
         return Response(status_code=HTTPStatus.INTERNAL_SERVER_ERROR)

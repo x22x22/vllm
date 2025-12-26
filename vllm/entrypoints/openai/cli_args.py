@@ -194,6 +194,22 @@ class FrontendArgs:
     If set to True, only enable the Tokens In<>Out endpoint. 
     This is intended for use in a Disaggregated Everything setup.
     """
+    responses_proxy_mode: bool = False
+    """
+    If set to True, enable Responses API proxy mode. In this mode, the server
+    acts as a proxy that converts Responses API requests to chat/completions
+    requests and forwards them to a remote OpenAI-compatible service.
+    Requires --responses-proxy-base-url and --responses-proxy-api-key.
+    """
+    responses_proxy_base_url: str | None = None
+    """
+    Base URL of the remote OpenAI-compatible service for Responses API proxy mode.
+    Example: https://api.openai.com/v1 or https://dashscope.aliyuncs.com/compatible-mode/v1
+    """
+    responses_proxy_api_key: str | None = None
+    """
+    API key for authenticating with the remote service in Responses API proxy mode.
+    """
 
     @staticmethod
     def add_cli_args(parser: FlexibleArgumentParser) -> FlexibleArgumentParser:
@@ -285,14 +301,24 @@ def validate_parsed_serve_args(args: argparse.Namespace):
     if hasattr(args, "subparser") and args.subparser != "serve":
         return
 
+    # Validate proxy mode configuration
+    if args.responses_proxy_mode:
+        if not args.responses_proxy_base_url:
+            raise ValueError("Error: --responses-proxy-mode requires --responses-proxy-base-url")
+        if not args.responses_proxy_api_key:
+            raise ValueError("Error: --responses-proxy-mode requires --responses-proxy-api-key")
+        # In proxy mode, we don't need a local model
+        logger.info("Running in Responses API proxy mode, local model not required")
+        return
+
     # Ensure that the chat template is valid; raises if it likely isn't
     validate_chat_template(args.chat_template)
 
     # Enable auto tool needs a tool call parser to be valid
     if args.enable_auto_tool_choice and not args.tool_call_parser:
-        raise TypeError("Error: --enable-auto-tool-choice requires --tool-call-parser")
+        raise ValueError("Error: --enable-auto-tool-choice requires --tool-call-parser")
     if args.enable_log_outputs and not args.enable_log_requests:
-        raise TypeError("Error: --enable-log-outputs requires --enable-log-requests")
+        raise ValueError("Error: --enable-log-outputs requires --enable-log-requests")
 
 
 def create_parser_for_docs() -> FlexibleArgumentParser:
