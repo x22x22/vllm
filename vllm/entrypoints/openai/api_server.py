@@ -67,6 +67,9 @@ from vllm.entrypoints.openai.serving_models import (
     OpenAIServingModels,
 )
 from vllm.entrypoints.openai.serving_responses import OpenAIServingResponses
+from vllm.entrypoints.openai.serving_responses_proxy import (
+    OpenAIServingResponsesProxy,
+)
 from vllm.entrypoints.openai.serving_transcription import (
     OpenAIServingTranscription,
     OpenAIServingTranslation,
@@ -114,7 +117,8 @@ _running_tasks: set[asyncio.Task] = set()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        if app.state.log_stats:
+        # Only log stats if we have an engine client (not in proxy mode)
+        if hasattr(app.state, 'log_stats') and app.state.log_stats and app.state.engine_client is not None:
             engine_client: EngineClient = app.state.engine_client
 
             async def _force_log():
@@ -990,10 +994,50 @@ def build_app(args: Namespace) -> FastAPI:
 
 
 async def init_app_state(
-    engine_client: EngineClient,
+    engine_client: EngineClient | None,
     state: State,
     args: Namespace,
 ) -> None:
+    # Check if we're in proxy mode
+    if args.responses_proxy_mode:
+        logger.info("Initializing in Responses API proxy mode")
+        
+        if args.enable_log_requests:
+            request_logger = RequestLogger(max_log_len=args.max_log_len)
+        else:
+            request_logger = None
+
+        # Initialize proxy serving responses
+        state.openai_serving_responses = OpenAIServingResponsesProxy(
+            base_url=args.responses_proxy_base_url,
+            api_key=args.responses_proxy_api_key,
+            request_logger=request_logger,
+        )
+        
+        # Set other state values to None as they're not needed in proxy mode
+        state.engine_client = None
+        state.log_stats = False
+        state.vllm_config = None
+        state.args = args
+        state.openai_serving_models = None
+        state.openai_serving_chat = None
+        state.openai_serving_completion = None
+        state.openai_serving_embedding = None
+        state.openai_serving_pooling = None
+        state.openai_serving_transcription = None
+        state.openai_serving_translation = None
+        state.anthropic_serving_messages = None
+        state.serving_classification = None
+        state.serving_scores = None
+        state.serving_tokens = None
+        state.openai_serving_tokenization = None
+        
+        logger.info("Proxy mode initialization complete")
+        return
+
+    # Standard mode - engine_client must be provided
+    assert engine_client is not None, "engine_client required in non-proxy mode"
+    
     vllm_config = engine_client.vllm_config
 
     if args.served_model_name is not None:
@@ -1337,6 +1381,38 @@ async def run_server_worker(
     if log_config is not None:
         uvicorn_kwargs["log_config"] = log_config
 
+    # In proxy mode, we don't need to create an engine client
+    if args.responses_proxy_mode:
+        logger.info("Running in Responses API proxy mode, skipping engine initialization")
+        app = build_app(args)
+        await init_app_state(None, app.state, args)
+        
+        logger.info("Starting vLLM Responses API proxy server on %s", listen_address)
+        shutdown_task = await serve_http(
+            app,
+            sock=sock,
+            enable_ssl_refresh=args.enable_ssl_refresh,
+            host=args.host,
+            port=args.port,
+            log_level=args.uvicorn_log_level,
+            access_log=not args.disable_uvicorn_access_log,
+            timeout_keep_alive=envs.VLLM_HTTP_TIMEOUT_KEEP_ALIVE,
+            ssl_keyfile=args.ssl_keyfile,
+            ssl_certfile=args.ssl_certfile,
+            ssl_ca_certs=args.ssl_ca_certs,
+            ssl_cert_reqs=args.ssl_cert_reqs,
+            h11_max_incomplete_event_size=args.h11_max_incomplete_event_size,
+            h11_max_header_count=args.h11_max_header_count,
+            **uvicorn_kwargs,
+        )
+        
+        try:
+            await shutdown_task
+        finally:
+            sock.close()
+        return
+
+    # Standard mode with engine client
     async with build_async_engine_client(
         args,
         client_config=client_config,

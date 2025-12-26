@@ -194,6 +194,22 @@ class FrontendArgs:
     If set to True, only enable the Tokens In<>Out endpoint. 
     This is intended for use in a Disaggregated Everything setup.
     """
+    responses_proxy_mode: bool = False
+    """
+    If set to True, enable Responses API proxy mode. In this mode, the server
+    acts as a proxy that converts Responses API requests to chat/completions
+    requests and forwards them to a remote OpenAI-compatible service.
+    Requires --responses-proxy-base-url and --responses-proxy-api-key.
+    """
+    responses_proxy_base_url: str | None = None
+    """
+    Base URL of the remote OpenAI-compatible service for Responses API proxy mode.
+    Example: https://api.openai.com/v1 or https://dashscope.aliyuncs.com/compatible-mode/v1
+    """
+    responses_proxy_api_key: str | None = None
+    """
+    API key for authenticating with the remote service in Responses API proxy mode.
+    """
 
     @staticmethod
     def add_cli_args(parser: FlexibleArgumentParser) -> FlexibleArgumentParser:
@@ -283,6 +299,16 @@ def make_arg_parser(parser: FlexibleArgumentParser) -> FlexibleArgumentParser:
 def validate_parsed_serve_args(args: argparse.Namespace):
     """Quick checks for model serve args that raise prior to loading."""
     if hasattr(args, "subparser") and args.subparser != "serve":
+        return
+
+    # Validate proxy mode configuration
+    if args.responses_proxy_mode:
+        if not args.responses_proxy_base_url:
+            raise TypeError("Error: --responses-proxy-mode requires --responses-proxy-base-url")
+        if not args.responses_proxy_api_key:
+            raise TypeError("Error: --responses-proxy-mode requires --responses-proxy-api-key")
+        # In proxy mode, we don't need a local model
+        logger.info("Running in Responses API proxy mode, local model not required")
         return
 
     # Ensure that the chat template is valid; raises if it likely isn't
