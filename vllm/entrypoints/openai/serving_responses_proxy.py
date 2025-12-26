@@ -9,7 +9,6 @@ LLM providers that only support the chat/completions API.
 """
 
 import time
-import uuid
 from collections.abc import AsyncGenerator
 from http import HTTPStatus
 
@@ -29,6 +28,7 @@ from vllm.entrypoints.openai.protocol import (
     StreamingResponsesResponse,
 )
 from vllm.logger import init_logger
+from vllm.utils import random_uuid
 
 logger = init_logger(__name__)
 
@@ -143,10 +143,21 @@ class OpenAIServingResponsesProxy:
         message = choice.get("message", {})
         content = message.get("content", "")
 
+        # Build output text with ResponseOutputText
+        output_text = ResponseOutputText(
+            text=content,
+            annotations=[],
+            type="output_text",
+            logprobs=None,  # Proxy mode doesn't provide detailed logprobs
+        )
+
         # Build output message using ResponseOutputMessage
         output_message = ResponseOutputMessage(
+            id=f"msg_{response_id}",
+            content=[output_text] if content else [],
             role="assistant",
-            content=[content] if content else [],
+            status="completed",
+            type="message",
         )
 
         # Build usage information
@@ -234,9 +245,19 @@ class OpenAIServingResponsesProxy:
                 completion_tokens = usage.get("completion_tokens", 0)
 
         # Send completed event with final response
+        output_text = ResponseOutputText(
+            text=accumulated_content,
+            annotations=[],
+            type="output_text",
+            logprobs=None,  # Streaming proxy mode doesn't provide detailed logprobs
+        )
+        
         output_message = ResponseOutputMessage(
+            id=f"msg_{response_id}",
+            content=[output_text] if accumulated_content else [],
             role="assistant",
-            content=[accumulated_content] if accumulated_content else [],
+            status="completed",
+            type="message",
         )
 
         usage_obj = ResponseUsage(
@@ -277,7 +298,7 @@ class OpenAIServingResponsesProxy:
         """
         try:
             # Generate response ID and timestamp
-            response_id = f"resp_{uuid.uuid4().hex}"
+            response_id = f"resp_{random_uuid()}"
             created_at = int(time.time())
 
             # Convert request
