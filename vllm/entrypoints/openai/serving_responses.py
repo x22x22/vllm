@@ -1246,7 +1246,7 @@ class OpenAIServingResponses(OpenAIServing):
         if tool_choice_auto:
             try:
                 tool_parser = self.tool_parser(tokenizer)
-            except RuntimeError as e:
+            except Exception as e:
                 logger.exception("Error in tool parser creation.")
                 raise e
         
@@ -1273,14 +1273,13 @@ class OpenAIServingResponses(OpenAIServing):
                 current_token_ids = previous_token_ids + output.token_ids
                 
                 # Process reasoning and tool calls
-                # For simplicity, we handle these cases separately:
-                # 1. reasoning_parser + tool_choice_auto: First extract reasoning, then tool calls
-                # 2. tool_choice_auto only: Extract tool calls
-                # 3. reasoning_parser only: Extract reasoning
-                # 4. Neither: Just return content
+                # Note: We handle reasoning and tool calls separately because we don't have
+                # the complex state tracking (reasoning_end_arr) from the chat API.
+                # For now, if both are enabled, reasoning parser takes precedence.
+                # Future enhancement: Add proper reasoning completion tracking.
                 
-                if reasoning_parser and tool_choice_auto:
-                    # Extract reasoning first
+                if reasoning_parser:
+                    # Try reasoning parser first
                     delta_message = reasoning_parser.extract_reasoning_streaming(
                         previous_text=previous_text,
                         current_text=current_text,
@@ -1289,11 +1288,16 @@ class OpenAIServingResponses(OpenAIServing):
                         current_token_ids=current_token_ids,
                         delta_token_ids=output.token_ids,
                     )
-                    # Note: We don't try to extract tool calls while reasoning is in progress
-                    # The tool parser will handle tool calls after reasoning tags are complete
-                    if not delta_message:
-                        # If reasoning parser returns None, try tool parser
-                        delta_message = tool_parser.extract_tool_calls_streaming(
+                    # If reasoning parser returns content (not reasoning), and we have tool parser,
+                    # try to extract tool calls from that content
+                    if (
+                        delta_message
+                        and delta_message.content is not None
+                        and delta_message.reasoning is None
+                        and tool_choice_auto
+                    ):
+                        # Content without reasoning - may contain tool calls
+                        tool_delta = tool_parser.extract_tool_calls_streaming(
                             previous_text=previous_text,
                             current_text=current_text,
                             delta_text=delta_text,
@@ -1302,6 +1306,9 @@ class OpenAIServingResponses(OpenAIServing):
                             delta_token_ids=output.token_ids,
                             request=request,
                         )
+                        if tool_delta and tool_delta.tool_calls:
+                            # Use tool calls instead of content
+                            delta_message = tool_delta
                 elif tool_choice_auto:
                     # Only tool calls, no reasoning
                     delta_message = tool_parser.extract_tool_calls_streaming(
@@ -1312,16 +1319,6 @@ class OpenAIServingResponses(OpenAIServing):
                         current_token_ids=current_token_ids,
                         delta_token_ids=output.token_ids,
                         request=request,
-                    )
-                elif reasoning_parser:
-                    # Only reasoning, no tool calls
-                    delta_message = reasoning_parser.extract_reasoning_streaming(
-                        previous_text=previous_text,
-                        current_text=current_text,
-                        delta_text=delta_text,
-                        previous_token_ids=previous_token_ids,
-                        current_token_ids=current_token_ids,
-                        delta_token_ids=output.token_ids,
                     )
                 else:
                     # Neither reasoning nor tool calls
@@ -1647,7 +1644,8 @@ class OpenAIServingResponses(OpenAIServing):
         
         # Finalize tool calls if any
         if tool_call_items:
-            for tool_idx, tc_data in tool_call_items.items():
+            # Sort by tool_idx for deterministic event ordering
+            for tool_idx, tc_data in sorted(tool_call_items.items()):
                 # Tool call output_index is after the message content
                 tool_output_index = current_output_index + 1 + tool_idx
                 # Send arguments done event
