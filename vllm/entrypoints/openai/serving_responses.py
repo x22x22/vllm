@@ -1270,6 +1270,7 @@ class OpenAIServingResponses(OpenAIServing):
                 
                 current_text = previous_text + output.text
                 delta_text = output.text
+                current_token_ids = previous_token_ids + output.token_ids
                 
                 # Process reasoning and tool calls
                 # For simplicity, we handle these cases separately:
@@ -1285,7 +1286,7 @@ class OpenAIServingResponses(OpenAIServing):
                         current_text=current_text,
                         delta_text=delta_text,
                         previous_token_ids=previous_token_ids,
-                        current_token_ids=previous_token_ids + output.token_ids,
+                        current_token_ids=current_token_ids,
                         delta_token_ids=output.token_ids,
                     )
                     # Note: We don't try to extract tool calls while reasoning is in progress
@@ -1297,7 +1298,7 @@ class OpenAIServingResponses(OpenAIServing):
                             current_text=current_text,
                             delta_text=delta_text,
                             previous_token_ids=previous_token_ids,
-                            current_token_ids=previous_token_ids + output.token_ids,
+                            current_token_ids=current_token_ids,
                             delta_token_ids=output.token_ids,
                             request=request,
                         )
@@ -1308,7 +1309,7 @@ class OpenAIServingResponses(OpenAIServing):
                         current_text=current_text,
                         delta_text=delta_text,
                         previous_token_ids=previous_token_ids,
-                        current_token_ids=previous_token_ids + output.token_ids,
+                        current_token_ids=current_token_ids,
                         delta_token_ids=output.token_ids,
                         request=request,
                     )
@@ -1319,7 +1320,7 @@ class OpenAIServingResponses(OpenAIServing):
                         current_text=current_text,
                         delta_text=delta_text,
                         previous_token_ids=previous_token_ids,
-                        current_token_ids=previous_token_ids + output.token_ids,
+                        current_token_ids=current_token_ids,
                         delta_token_ids=output.token_ids,
                     )
                 else:
@@ -1391,6 +1392,10 @@ class OpenAIServingResponses(OpenAIServing):
                             tool_idx = next_tool_call_index
                             next_tool_call_index += 1
                         
+                        # Tool call output_index is after the message content
+                        # current_output_index is the message, so tool calls start at +1
+                        tool_output_index = current_output_index + 1 + tool_idx
+                        
                         # Check if this is a new tool call
                         if tool_idx not in tool_call_items:
                             # Start a new tool call item
@@ -1409,7 +1414,7 @@ class OpenAIServingResponses(OpenAIServing):
                                 ResponseOutputItemAddedEvent(
                                     type="response.output_item.added",
                                     sequence_number=-1,
-                                    output_index=current_output_index + 1 + tool_idx,
+                                    output_index=tool_output_index,
                                     item=ResponseFunctionToolCall(
                                         id=tc_item_id,
                                         call_id=tc_call_id,
@@ -1428,7 +1433,7 @@ class OpenAIServingResponses(OpenAIServing):
                                 ResponseFunctionCallArgumentsDeltaEvent(
                                     type="response.function_call_arguments.delta",
                                     sequence_number=-1,
-                                    output_index=current_output_index + 1 + tool_idx,
+                                    output_index=tool_output_index,
                                     item_id=tool_call_items[tool_idx]["id"],
                                     delta=tool_call.function.arguments,
                                 )
@@ -1643,12 +1648,14 @@ class OpenAIServingResponses(OpenAIServing):
         # Finalize tool calls if any
         if tool_call_items:
             for tool_idx, tc_data in tool_call_items.items():
+                # Tool call output_index is after the message content
+                tool_output_index = current_output_index + 1 + tool_idx
                 # Send arguments done event
                 yield _increment_sequence_number_and_return(
                     ResponseFunctionCallArgumentsDoneEvent(
                         type="response.function_call_arguments.done",
                         sequence_number=-1,
-                        output_index=current_output_index + 1 + tool_idx,
+                        output_index=tool_output_index,
                         item_id=tc_data["id"],
                         name=tc_data["name"],
                         arguments=tc_data["arguments"],
@@ -1659,7 +1666,7 @@ class OpenAIServingResponses(OpenAIServing):
                     ResponseOutputItemDoneEvent(
                         type="response.output_item.done",
                         sequence_number=-1,
-                        output_index=current_output_index + 1 + tool_idx,
+                        output_index=tool_output_index,
                         item=ResponseFunctionToolCall(
                             id=tc_data["id"],
                             call_id=tc_data["call_id"],
