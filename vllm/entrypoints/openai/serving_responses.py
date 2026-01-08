@@ -1659,13 +1659,6 @@ class OpenAIServingResponses(OpenAIServing):
                         ),
                     )
                 )
-                    ResponseOutputItemDoneEvent(
-                        type="response.output_item.done",
-                        sequence_number=-1,
-                        output_index=current_output_index,
-                        item=item,
-                    )
-                )
 
     async def _process_harmony_streaming_events(
         self,
