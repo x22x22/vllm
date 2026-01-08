@@ -1257,6 +1257,7 @@ class OpenAIServingResponses(OpenAIServing):
         
         # Track tool call state
         tool_call_items: dict[int, dict] = {}  # index -> {id, call_id, name, arguments}
+        next_tool_call_index = 0  # Auto-increment for tool calls without explicit index
         
         async for ctx in result_generator:
             assert isinstance(ctx, SimpleContext)
@@ -1271,6 +1272,12 @@ class OpenAIServingResponses(OpenAIServing):
                 delta_text = output.text
                 
                 # Process reasoning and tool calls
+                # For simplicity, we handle these cases separately:
+                # 1. reasoning_parser + tool_choice_auto: First extract reasoning, then tool calls
+                # 2. tool_choice_auto only: Extract tool calls
+                # 3. reasoning_parser only: Extract reasoning
+                # 4. Neither: Just return content
+                
                 if reasoning_parser and tool_choice_auto:
                     # Extract reasoning first
                     delta_message = reasoning_parser.extract_reasoning_streaming(
@@ -1281,10 +1288,11 @@ class OpenAIServingResponses(OpenAIServing):
                         current_token_ids=previous_token_ids + output.token_ids,
                         delta_token_ids=output.token_ids,
                     )
-                    # If reasoning is done, try to extract tool calls
-                    if delta_message and delta_message.content is not None:
-                        # Reasoning is done, extract tool calls from content
-                        tool_delta = tool_parser.extract_tool_calls_streaming(
+                    # Note: We don't try to extract tool calls while reasoning is in progress
+                    # The tool parser will handle tool calls after reasoning tags are complete
+                    if not delta_message:
+                        # If reasoning parser returns None, try tool parser
+                        delta_message = tool_parser.extract_tool_calls_streaming(
                             previous_text=previous_text,
                             current_text=current_text,
                             delta_text=delta_text,
@@ -1293,8 +1301,6 @@ class OpenAIServingResponses(OpenAIServing):
                             delta_token_ids=output.token_ids,
                             request=request,
                         )
-                        if tool_delta and tool_delta.tool_calls:
-                            delta_message = tool_delta
                 elif tool_choice_auto:
                     # Only tool calls, no reasoning
                     delta_message = tool_parser.extract_tool_calls_streaming(
@@ -1378,7 +1384,13 @@ class OpenAIServingResponses(OpenAIServing):
                 # Handle tool calls
                 if delta_message.tool_calls:
                     for tool_call in delta_message.tool_calls:
-                        tool_idx = tool_call.index if tool_call.index is not None else 0
+                        # Use explicit index if provided, otherwise auto-increment
+                        if tool_call.index is not None:
+                            tool_idx = tool_call.index
+                        else:
+                            tool_idx = next_tool_call_index
+                            next_tool_call_index += 1
+                        
                         # Check if this is a new tool call
                         if tool_idx not in tool_call_items:
                             # Start a new tool call item
@@ -1630,8 +1642,7 @@ class OpenAIServingResponses(OpenAIServing):
         
         # Finalize tool calls if any
         if tool_call_items:
-            for tool_idx in sorted(tool_call_items.keys()):
-                tc_data = tool_call_items[tool_idx]
+            for tool_idx, tc_data in tool_call_items.items():
                 # Send arguments done event
                 yield _increment_sequence_number_and_return(
                     ResponseFunctionCallArgumentsDoneEvent(
